@@ -16,6 +16,10 @@ int inputIndex = 0;
 boolean stringComplete = false;
 int cpuLoad = 0;
 int ramLoad = 0;
+bool statsReceived = false;
+bool showError = false;
+unsigned long lastStatsTime = 0;
+const unsigned long statsTimeout = 2000;
 float temperature = 0;
 float humidity = 0;
 
@@ -29,7 +33,7 @@ void setup() {
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(2, 0);
-  lcd.print("System Ready");
+  lcd.print("system ready");
   delay(2000);
   lcd.clear();
   inputIndex = 0;
@@ -84,6 +88,15 @@ void loop() {
     if (parse_stats(inputBuffer, inputIndex, cpu, ram)) {
       cpuLoad = cpu;
       ramLoad = ram;
+      statsReceived = true;
+      lastStatsTime = millis();
+      if (showError) {
+        showError = false;
+        lcd.clear();
+      }
+    } else {
+      // невалидный пакет — сбрасываем таймер
+      lastStatsTime = 0;
     }
     inputIndex = 0;
     stringComplete = false;
@@ -99,23 +112,33 @@ void loop() {
     }
   }
 
-  lcd.setCursor(0, 0);
-  lcd.print("CPU:");
-  lcd.print(cpuLoad);
-  lcd.print("% ");
-  lcd.setCursor(10, 0);
-  lcd.print("T:");
-  lcd.print((int)temperature);
-  lcd.print("C");
+  unsigned long elapsed = millis() - lastStatsTime;
+  bool timeout = statsReceived && (elapsed >= statsTimeout);
 
-  lcd.setCursor(0, 1);
-  lcd.print("RAM:");
-  lcd.print(ramLoad);
-  lcd.print("% ");
-  lcd.setCursor(10, 1);
-  lcd.print("H:");
-  lcd.print((int)humidity);
-  lcd.print("%");
+  if (timeout && !showError) {
+    showError = true;
+    lcd.clear();
+    lcd.setCursor(3, 0);
+    lcd.print("wire error");
+  } else if (!showError && statsReceived) {
+    lcd.setCursor(0, 0);
+    lcd.print("CPU:");
+    lcd.print(cpuLoad);
+    lcd.print("% ");
+    lcd.setCursor(10, 0);
+    lcd.print("T:");
+    lcd.print((int)temperature);
+    lcd.print("C");
+
+    lcd.setCursor(0, 1);
+    lcd.print("RAM:");
+    lcd.print(ramLoad);
+    lcd.print("% ");
+    lcd.setCursor(10, 1);
+    lcd.print("H:");
+    lcd.print((int)humidity);
+    lcd.print("%");
+  }
 }
 
 void serialEvent() {

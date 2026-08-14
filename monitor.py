@@ -108,6 +108,8 @@ ADAPTER_VID_PID_LIST = [
 BAUD_RATE = 9600
 RECONNECT_DELAY = 3  # Секунд между попытками
 
+WIRE_LOST_TIMEOUT = 2.0  # Секунды без данных — считать связь потерянной
+
 # --- Функция поиска порта ---
 def find_adapter_port(vid_pid_list):
     print("\n[SCAN] Поиск Adapter по VID:PID...")
@@ -170,58 +172,68 @@ def main():
         sys.exit("\nУстановите Python с поддержкой pip и запустите скрипт заново.")
 
     print("🖥️  Мониторинг запущен. Для выхода нажмите Ctrl+C.\n")
-    
+
     while True:
-        port = find_adapter_port(ADAPTER_VID_PID_LIST)
-        if port is None:
-            print(f"[WAIT] Adapter не найден. Повтор через {RECONNECT_DELAY} сек...")
-            time.sleep(RECONNECT_DELAY)
-            continue
-
-        ser = None
         try:
-            ser = serial.Serial(port, BAUD_RATE, timeout=1)
-            print(f"\n✅ Подключено к {port} ({BAUD_RATE} бод)")
-            print("Отправка данных...\n")
-            time.sleep(2)
+            port = find_adapter_port(ADAPTER_VID_PID_LIST)
+            if port is None:
+                print(f"[WAIT] Adapter не найден. Повтор через {RECONNECT_DELAY} сек...")
+                time.sleep(RECONNECT_DELAY)
+                continue
 
-            while True:
-                cpu_val, ram_val = get_system_stats()
-                data_str = f"CPU:{int(cpu_val)};RAM:{int(ram_val)}\n"
-                ser.write(data_str.encode('utf-8'))
-                print(f"📤 Sent: {data_str.strip()}")
-                time.sleep(1)
-
-        except (serial.SerialException, OSError) as e:
-            print(f"\n⚠️  Соединение потеряно: {e}")
-            
-            # Безопасно закрываем дескриптор, если он ещё "жив"
-            if ser is not None:
-                try: ser.close()
-                except Exception: pass
-
-            # Пробуем ресет только если порт ещё виден системе
-            print("[ℹ️] Проверка доступности порта...")
-            ports = [p.device for p in serial.tools.list_ports.comports()]
-            if port in ports:
-                print("[ℹ️] Порт в системе. Попытка DTR-ресета...")
-                soft_reset_adapter(port, BAUD_RATE)
+            ser = None
+            last_send_time = time.time()  # Время последней успешной отправки
+            try:
+                ser = serial.Serial(port, BAUD_RATE, timeout=1)
+                print(f"\n✅ Подключено к {port} ({BAUD_RATE} бод)")
+                print("Отправка данных...\n")
                 time.sleep(2)
-            else:
-                print("[ℹ️] Порт исчез. Ожидание повторного подключения ОС...")
 
-            print("[WAIT] Переподключение...")
+                while True:
+                    cpu_val, ram_val = get_system_stats()
+                    data_str = f"CPU:{int(cpu_val)};RAM:{int(ram_val)}\n"
+                    ser.write(data_str.encode('utf-8'))
+                    print(f"📤 Sent: {data_str.strip()}")
+                    last_send_time = time.time()  # Обновляем таймер
+
+                    time.sleep(1)
+
+            except (serial.SerialException, OSError) as e:
+                print(f"\n⚠️  Соединение потеряно: {e}")
+
+                # Безопасно закрываем дескриптор, если он ещё "жив"
+                if ser is not None:
+                    try: ser.close()
+                    except Exception: pass
+
+                # Пробуем ресет только если порт ещё виден системе
+                print("[ℹ️] Проверка доступности порта...")
+                ports = [p.device for p in serial.tools.list_ports.comports()]
+                if port in ports:
+                    print("[ℹ️] Порт в системе. Попытка DTR-ресета...")
+                    soft_reset_adapter(port, BAUD_RATE)
+                    time.sleep(2)
+                else:
+                    print("[ℹ️] Порт исчез. Ожидание повторного подключения ОС...")
+
+                print("[WAIT] Переподключение...")
+            except KeyboardInterrupt:
+                # Ctrl+C при активной отправке — выйти из внутреннего цикла (перехватывается внешним)
+                raise
+            except Exception as e:
+                print(f"\n❌ Непредвиденная ошибка: {e}")
+                break
+            finally:
+                if ser is not None:
+                    try: ser.close()
+                    except Exception: pass
+
         except KeyboardInterrupt:
+            # Ctrl+C при поиске порта (внешний цикл) — выйти полностью
             print("\n🛑 Программа остановлена.")
             break
-        except Exception as e:
-            print(f"\n❌ Непредвиденная ошибка: {e}")
-            break
-        finally:
-            if ser is not None:
-                try: ser.close()
-                except Exception: pass
-            time.sleep(RECONNECT_DELAY)
+
+        time.sleep(RECONNECT_DELAY)
 
 if __name__ == "__main__":
     main()
